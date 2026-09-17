@@ -284,49 +284,90 @@ if (characterGuide && characterGuideImage) {
       frameUpdateRequest = 0;
     };
 
-    const getScale = () => window.innerWidth < 768 ? 0.45 : 1;
-
     // Set initial prominent scale for character on Hero load (1.35x)
     gsap.set(characterGuide, { scale: 1.35, x: 0, y: 0 });
 
     const contactSection = document.querySelector("#contact");
     const lerp = (start, end, amount) => start + (end - start) * amount;
+
+    // Desktop guidePath: x in vw, y in vh. Mobile overrides clamp these down.
     const guidePath = [
-      { progress: 0, x: 0, y: 0, scale: 1.35 },
-      { progress: .15, x: 22, y: 14, scale: 1 },
-      { progress: .4, x: -26, y: 4, scale: 1 },
-      { progress: .7, x: 24, y: 10, scale: 1 },
-      { progress: .85, x: -22, y: 6, scale: 1 },
-      { progress: 1, x: 18, y: 14, scale: 1 }
+      { progress: 0,   x: 0,   y: 0,  scale: 1.35 },
+      { progress: .15, x: 22,  y: 14, scale: 1 },
+      { progress: .4,  x: -26, y: 4,  scale: 1 },
+      { progress: .7,  x: 24,  y: 10, scale: 1 },
+      { progress: .85, x: -22, y: 6,  scale: 1 },
+      { progress: 1,   x: 18,  y: 14, scale: 1 }
     ];
 
-    const syncGuidePosition = (progress) => {
-      const sectionIsVisible = (section, topRatio, bottomRatio) => {
-        if (!section) return false;
-        const rect = section.getBoundingClientRect();
-        return rect.top <= window.innerHeight * topRatio && rect.bottom >= window.innerHeight * bottomRatio;
-      };
+    /**
+     * Returns responsive clamp config based on current viewport.
+     *   ≤479px  → xMaxPx:45,  usePx:true  (CSS bottom:0 anchors vertically)
+     *   480–767px → xMaxPx:60, usePx:true
+     *   ≥768px  → usePx:false  (use original vw/vh values unchanged)
+     */
+    const getMobileConfig = () => {
+      const w = window.innerWidth;
+      if (w <= 479) return { usePx: true, xMaxPx: 45,  charWidth: "clamp(70px,16vw,90px)" };
+      if (w <= 767) return { usePx: true, xMaxPx: 60,  charWidth: "clamp(80px,18vw,110px)" };
+      return              { usePx: false, xMaxPx: null, charWidth: "clamp(140px,15vw,200px)" };
+    };
 
+    const syncGuidePosition = (progress) => {
       characterGuide.classList.remove("is-work", "is-contact");
 
       let start = guidePath[0];
-      let end = guidePath[guidePath.length - 1];
+      let end   = guidePath[guidePath.length - 1];
       for (let index = 1; index < guidePath.length; index += 1) {
         if (progress <= guidePath[index].progress) {
           start = guidePath[index - 1];
-          end = guidePath[index];
+          end   = guidePath[index];
           break;
         }
       }
+
       const segmentProgress = (progress - start.progress) / (end.progress - start.progress || 1);
-      gsap.set(characterGuide, {
-        left: "50%",
-        width: "clamp(140px,15vw,200px)",
-        x: `${lerp(start.x, end.x, segmentProgress)}vw`,
-        y: `${lerp(start.y, end.y, segmentProgress)}vh`,
-        scale: lerp(start.scale, end.scale, segmentProgress)
-      });
+      const rawX   = lerp(start.x, end.x, segmentProgress); // in vw
+      const rawY   = lerp(start.y, end.y, segmentProgress); // in vh
+      const rawScale = lerp(start.scale, end.scale, segmentProgress);
+      const cfg    = getMobileConfig();
+
+      if (cfg.usePx) {
+        // Mobile: convert desktop vw→px then clamp to safe range.
+        // Y is zeroed entirely — CSS bottom:0 handles vertical anchoring.
+        const clampedX = Math.max(-cfg.xMaxPx, Math.min(cfg.xMaxPx,
+          rawX / 100 * window.innerWidth
+        ));
+        gsap.set(characterGuide, {
+          left:  "50%",
+          width: cfg.charWidth,
+          x:     clampedX,   // px (number), no vw string
+          y:     0,          // never push off bottom edge
+          scale: rawScale
+        });
+      } else {
+        // Desktop: original vw/vh behaviour unchanged.
+        gsap.set(characterGuide, {
+          left:  "50%",
+          width: cfg.charWidth,
+          x:     `${rawX}vw`,
+          y:     `${rawY}vh`,
+          scale: rawScale
+        });
+      }
     };
+
+    // Debounced resize/orientationchange → recalculate ScrollTrigger layout.
+    // We wait 150 ms after the last resize event so we read stable dimensions.
+    let resizeTimer = null;
+    const onViewportChange = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        ScrollTrigger.refresh();
+      }, 150);
+    };
+    window.addEventListener("resize",            onViewportChange, { passive: true });
+    window.addEventListener("orientationchange", onViewportChange, { passive: true });
 
     ScrollTrigger.create({
       id: "character-guide-scroll",
